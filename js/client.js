@@ -38,15 +38,9 @@ class SimpleMap extends React.Component {
           attribution='&copy; <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
           url='http://tile.stamen.com/toner-lite/{z}/{x}/{y}@2x.png'
         />
+
         <ImageOverlay url='http://www.lib.utexas.edu/maps/historical/newark_nj_1922.jpg' imageBounds={[[40.712216, -74.22655], [40.773941, -74.12544]]} />
 
-        <WMSTileLayer
-          url={params.url}
-          format={params.format}
-          transparent={params.transparent}
-          version={params.version}
-          layers={params.layers}
-        />
 
       </Map>
 
