@@ -1,17 +1,15 @@
 import datashader as ds
 import datashader.transfer_functions as tf
-import pandas as pd
+import fastparquet as fp
 
 from flask import Flask, send_file, request
 
-
 app = Flask(__name__)
-app.debug = True
-CACHE = True
 
-
-df = pd.read_hdf('census.h5', 'census')
+parquet_file = fp.ParquetFile('census.parq')
+df = parquet_file.to_pandas()
 df.race = df.race.astype('category')
+
 color_key = {'w': 'aqua',
              'b': 'lime',
              'a': 'red',
@@ -23,7 +21,7 @@ def serve_image(dataset):
 
     # parse params
     bounds = request.args.get('bounds')
-    xmin, ymin, xmax, ymax =  map(float, bounds.split(','))
+    xmin, ymin, xmax, ymax = map(float, bounds.split(','))
     width = int(request.args.get('width'))
     height = int(request.args.get('height'))
 
