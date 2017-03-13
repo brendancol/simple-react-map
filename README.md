@@ -24,4 +24,9 @@ python server.py
 
 # in a separate terminal, run client
 webpack-dev-server
+
+
+# if you get an error saying SNAPPY is not available, try:
+brew install snappy
+pip install python-snappy
 ```
