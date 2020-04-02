@@ -428,6 +428,7 @@ class SimpleMap extends React.Component {
             var xmax = window.L.CRS.EPSG3857.project(leafletMap.getBounds()._northEast)['x'].toString();
             var ymax = window.L.CRS.EPSG3857.project(leafletMap.getBounds()._northEast)['y'].toString();
             var bounds = [xmin, ymin, xmax, ymax].join(',');
+            /*
 
             var nurl = `http://localhost:5000/census?width=${width}&height=${height}&bounds=${bounds}`;
             layer.setBounds(leafletMap.getBounds());
@@ -435,6 +436,7 @@ class SimpleMap extends React.Component {
             layer.on('load', function() {
               layer.setOpacity(1);
             });
+            */
 
           }
       });
@@ -451,6 +453,7 @@ class SimpleMap extends React.Component {
       position: 'absolute',
       zIndex: 10000,
       top: 0,
+      left: 0,
       right: 0,
       backgroundColor: 'black',
       background:'rgba(0,0,0,0.4)',
@@ -459,8 +462,24 @@ class SimpleMap extends React.Component {
       paddingRight: '30px',
       paddingTop: 0,
       paddingBottom: 0,
+
       margin: 0,
-      textAlign: 'right'
+      textAlign: 'left'
+    };
+
+    var logo_styles = {
+      position: 'absolute',
+      zIndex: 10000,
+      top: '20px',
+      right: 0,
+      background:'rgba(0,0,0,0.0)',
+      paddingLeft: '10px',
+      paddingRight: '10px',
+      paddingTop: 0,
+      paddingBottom: 0,
+      margin: 0,
+      width: 250,
+      textAlign: 'left'
     };
 
     var small_text = {
@@ -485,16 +504,19 @@ class SimpleMap extends React.Component {
             opacity={.1}
           />
 
-         <ImageOverlay url=''
-                       bounds={[[0,0],[0,0]]}
-                       opacity={this.state.layeropacity}
-                      />
+          <TileLayer
+            url={'http://localhost:5000/census/tile/{z}/{x}/{y}'}
+            opacity={1}
+          />
+
         </Map>
 
         <div style={title_styles}>
-          <p style={small_text}>Datashader: Race/Ethnicity of 30 Largest US Cities</p>
+          <p style={small_text}>Datashader / Xarray-Spatial: Race/Ethnicity of 30 Largest US Cities</p>
           <h1 style={{margin:0}}>{this.state.location_index + 1}. {this.state.city_title}</h1>
+          <img style={logo_styles} id="logo" src="https://secureservercdn.net/198.71.233.197/hb9.c63.myftpupload.com/wp-content/uploads/2020/01/cropped-makepath_Logo-2.png" />
         </div>
+
 
       </div>
 
