@@ -1,15 +1,103 @@
-import datashader as ds
-import datashader.transfer_functions as tf
+from os import path
+from threading import Thread
 
+import dask.dataframe as ddf
+
+import geopandas as gpd
+
+from spatialpandas import GeoDataFrame
+
+import pandas as pd
+import datashader as ds
 import fastparquet as fp
 
-from flask import Flask, send_file, request
+from flask import Flask, send_file, request, jsonify
+from flask_cors import CORS
+
+import boto3
+from copy import copy
+
+import datashader.transfer_functions as tf
+from datashader.transfer_functions import shade
+from datashader.transfer_functions import stack
+
+from datashader.colors import Elevation
+from datashader.colors import inferno
+from datashader.colors import viridis
+from datashader.colors import Greys9
+from datashader.colors import Hot
+from datashader.colors import Set1
+from datashader.colors import Set2
+from datashader.colors import Set3
+from datashader.colors import Sets1to3
+
+from pyproj import Proj, transform
 
 app = Flask(__name__)
+CORS(app)
 
-parquet_file = fp.ParquetFile('census.parq')
-df = parquet_file.to_pandas()
-df.race = df.race.astype('category')
+s3 = boto3.client('s3')
+
+
+cities = gpd.read_file('s3://makepath-reference/reference.gpkg',
+                       layer='cities')
+
+lngs, lats = transform(Proj(init='epsg:3857'),
+                       Proj(init='epsg:4326'),
+                       cities['geometry'].x.values,
+                       cities['geometry'].y.values)
+
+cities['latitude'] = lats
+cities['longitude'] = lngs
+cities['zoom'] = 9
+cities['name'] = cities['CITY_NAME']
+
+def load_census_demo():
+    print('Loading Census Data')
+    parquet_file = fp.ParquetFile(path.expanduser('~/census.parq'))
+    df = parquet_file.to_pandas()
+    df.race = df.race.astype('category')
+    return df
+
+
+def load_kinsa():
+    print('Loading Kinsa Data')
+    county_df = gpd.read_file(path.expanduser('~/kinsa_geometry.gpkg'),
+                              layer='county')
+    oneday_df = ddf.read_csv('s3://makepath-demo/kinsa/one_day.csv').compute()
+    oneday_df['region_id'] = oneday_df['region_id'].astype(str).str.zfill(5)
+    county_df['GEOID'] = county_df['GEOID'].astype(str).str.zfill(5)
+
+    fields = ['GEOID', 'geometry', 'forecast_upper']
+    county_df = county_df.join(oneday_df.set_index('region_id'), on='GEOID')[fields]
+    return GeoDataFrame(county_df, geometry='geometry')
+
+# should be read from s3 listing to find buckets with `tileshader.yml` file and then create the dictionary form that.
+# dict(<s3_bucket>: dict(df, geometry, span)
+datasets = {
+    'census-demo': dict(df=load_census_demo(), geometry='point', span=None, name='Census Synthetic People'),
+    'makepath-kinsa':  dict(df=load_kinsa(), geometry='polygon', span='min/max', name='Kinsa')
+}
+
+colors = {
+    'race': dict((('w', 'aqua'),
+             ('b', 'lime'),
+             ('a', 'red'),
+             ('h', 'fuchsia'),
+             ('o', 'yellow'))),
+    'inferno': inferno,
+    'viridis': viridis,
+    'elevation': Elevation,
+    'greys9': Greys9,
+    'hot': Hot,
+    'set1': Set1,
+    'set2': Set2,
+    'set3': Set3,
+    'sets1to3': Sets1to3,
+    'hotspots': list(reversed(['#d53e4f', '#fc8d59',
+                          '#fee08b', '#ffffbf', "#e6f598",
+                          '#99d594', '#3288bd']))
+}
 
 
 def invert_y_tile(y, z):
@@ -186,8 +274,6 @@ tile_def = MercatorTileDefinition(x_range=(-20037508.34, 20037508.34),
                                   y_range=(-20037508.34, 20037508.34))
 
 
-from functools import lru_cache
-
 def freezeargs(func):
     """Transform mutable dictionnary
     Into immutable
@@ -202,62 +288,98 @@ def freezeargs(func):
     return wrapped
 
 
-def create_agg(dataset, x, y, z):
+def create_agg(dataset, xfield, yfield, zfield, agg_func, x, y, z, height=256, width=256):
+
     xmin, ymin, xmax, ymax = tile_def.get_tile_meters(x, y, z)
-    width = 256
-    height = 256
+
     cvs = ds.Canvas(plot_width=width,
                     plot_height=height,
                     x_range=(xmin, xmax),
                     y_range=(ymin, ymax))
-    return cvs.points(df, 'meterswest', 'metersnorth', ds.count_cat('race'))
+
+    if zfield == 'None':
+        zfield = None
+
+    if dataset['geometry'] == 'point':
+        if zfield:
+            return cvs.points(dataset['df'], xfield, yfield, getattr(ds, agg_func)(zfield))
+        else:
+            return cvs.points(dataset['df'], xfield, yfield)
+
+    elif dataset['geometry'] == 'polygon':
+        if zfield:
+            return cvs.polygons(dataset['df'], xfield, agg=getattr(ds, agg_func)(zfield))
+        else:
+            return cvs.polygons(dataset['df'], xfield)
 
 
-@lru_cache(None)
-def create_tile(dataset, x, y, z, color_key):
+def create_tile(dataset_name, xfield, yfield, zfield, agg_func, cmap, how, z, x, y):
+    '''
+    span: dict<zoom_level_int:(min_value, max_value)
+    cmap: 
+    '''
+    import numpy as np
+    global datasets
+    dataset = datasets[dataset_name]
+    agg = create_agg(dataset, xfield, yfield, zfield, agg_func, x, y, z)
+    span = dataset.get('span')
 
-    if isinstance(color_key, tuple):
-        color_key = dict(color_key)
+    if isinstance(cmap, dict):
+        return tf.shade(agg, color_key=cmap)
+    else:
+        if span:
+            if span == 'min/max':
+                return tf.shade(agg, cmap=cmap, how=how, span=(np.nanmin(dataset['df'][zfield]),
+                                                               np.nanmax(dataset['df'][zfield])))
+        else:
+            return tf.shade(agg, cmap=cmap, how=how)
 
-    agg = create_agg(dataset, x, y, z)
-    img = tf.shade(agg, color_key=color_key, how='eq_hist')
-    return img
+
+def _upload_tile(img, bucket, url):
+    s3.upload_fileobj(img, bucket, url,
+                      ExtraArgs={'ACL': 'public-read',
+                                 'ContentType': 'image/png'})
 
 
-@app.route('/<dataset>/tile/<z>/<x>/<y>')
-def tile(dataset, x, y, z):
+@app.route('/<dataset>/tile/<xfield>/<yfield>/<zfield>/<agg_func>/<cmap>/<how>/<z>/<x>/<y>')
+def tile(dataset, xfield, yfield, zfield, agg_func, cmap, how, z, x, y):
     x = int(x)
     y = int(y)
     z = int(z)
 
-    color_key = (('w', 'aqua'),
-                 ('b', 'lime'),
-                 ('a', 'red'),
-                 ('h', 'fuchsia'),
-                 ('o', 'yellow'))
+    img = create_tile(dataset, xfield, yfield, zfield, agg_func, colors[cmap], how, z, x, y).to_bytesio()
+    url = f'tile/{xfield}/{yfield}/{zfield}/{agg_func}/{cmap}/{how}/{z}/{x}/{y}'
 
-    return send_file(create_tile(dataset, x, y, z, color_key).to_bytesio(), mimetype='image/png')
+    thread = Thread(target=_upload_tile, args=(copy(img), dataset, url))
+    thread.daemon = True
+    thread.start()
+
+    return send_file(img, mimetype='image/png')
 
 
-@app.route('/<dataset>')
-def serve_image(dataset):
+@app.route('/datasets')
+def get_datasets():
 
-    # parse params
-    bounds = request.args.get('bounds')
-    xmin, ymin, xmax, ymax = map(float, bounds.split(','))
-    width = int(request.args.get('width'))
-    height = int(request.args.get('height'))
+    resp = [{'key':'census-demo',
+             'text':'Synthetic People',
+             'value':'census-demo/tile/meterswest/metersnorth',
+             'fields': [{'key':'None','text':'None','value':'None'},
+                        {'key':'race','text':'Race / Ethnicity','value':'race'}]},
+             {'key':'makepath-kinsa',
+              'text':'Kinsa Forecast',
+              'value':'makepath-kinsa/tile/geometry/geometry',
+              'fields': [{'key':'forecast_upper',
+                          'text':'Upper Forecast',
+                          'value':'forecast_upper'}]}]
+    return jsonify(resp)
 
-    # shade image
-    cvs = ds.Canvas(plot_width=width,
-                    plot_height=height,
-                    x_range=(xmin, xmax),
-                    y_range=(ymin, ymax))
-    agg = cvs.points(df, 'meterswest', 'metersnorth', ds.count_cat('race'))
-    img = tf.shade(agg, color_key=color_key, how='eq_hist')
-    img_io = img.to_bytesio()
-    return send_file(img_io, mimetype='image/png')
 
+@app.route('/scenes')
+@app.route('/scenes/count')
+def get_scenes(count=10):
+    cities = cities[cities['FIPS_CNTRY'] == 'US'].nlargest(count, 'POP')
+    outfields = ['zoom', 'latitude', 'longitude', 'name']
+    return jsonify(cities[outfields].to_dict(orient='records'))
 
 if __name__ == "__main__":
-    app.run()
+    app.run(host='0.0.0.0')
