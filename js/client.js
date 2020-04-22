@@ -4,6 +4,7 @@ import { render } from 'react-dom';
 import { Map, Marker, Popup, TileLayer, ImageOverlay } from 'react-leaflet';
 import ReactCSSTransitionGroup from 'react-addons-css-transition-group';
 import { Dropdown, Menu } from 'semantic-ui-react'
+import { Slider } from "react-semantic-ui-range";
 
 
 
@@ -11,8 +12,6 @@ class SimpleMap extends React.Component {
 
   constructor() {
     super();
-
-
 
     this.state = {
       location_index: 0,
@@ -46,7 +45,18 @@ class SimpleMap extends React.Component {
       city_lng: 0,
       city_title: '',
       tile_url:'http://tile.stamen.com/toner/{z}/{x}/{y}@2x.png',
-      dataLoaded: false 
+      dataLoaded: false, 
+      dynspread: 0,
+      sliderSettings: {
+        onChange: this.onChangeDynspreadSlider,
+        start: 0,
+        min: 0,
+        max: 5,
+        step: 1
+      },
+      active_transforms: [],
+      transforms: [{'key':'hillshade','text':'Hillshade','value':'hillshade'},
+                   {'key':'quantile','text':'Quantile','value':'quantile'}],
     };
 
     // setInterval(this.nextLocation, 1000 * 60);
@@ -178,6 +188,12 @@ class SimpleMap extends React.Component {
     console.log(e);
   }
 
+
+  onChangeAdditionalTransforms = (e, { value }) => {
+    this.setState({ active_transforms: value });
+  };
+
+
   onChangeAgg = (e, data) => {
     this.setState({agg: data.value});
     console.log(e);
@@ -203,6 +219,11 @@ class SimpleMap extends React.Component {
     this.setState({field: data.value});
     console.log(e);
   }
+
+  onChangeDynspreadSlider = (e) => {
+    let value = parseInt(e);
+    this.setState({dynspread: value});
+  };
 
   toOptions = (objectArray) => {
 
@@ -339,8 +360,28 @@ class SimpleMap extends React.Component {
       paddingBottom: '6px'
     };
 
+    var dynspreadSliderStyle = {
+      position: 'fixed',
+      zIndex: 10000,
+      bottom: '20px',
+      right: '20px',
+      background:'rgba(0,0,0,0.0)',
+      paddingLeft: '10px',
+      paddingRight: '10px',
+      paddingTop: 0,
+      paddingBottom: 0,
+      margin: 0,
+      width: 250,
+    }
+
     let tile_url = `http://3.22.132.191:8080/${this.state.dataset.value}/${this.state.field}`; 
-    tile_url += `/${this.state.agg}/${this.state.color}/${this.state.how}/{z}/{x}/{y}`;
+    tile_url += `/${this.state.agg}/${this.state.color}/${this.state.how}/{z}/{x}/{y}/${this.state.dynspread}`;
+
+    if (this.state.active_transforms.length > 0) {
+      tile_url += `/${this.state.active_transforms.join(',')}`;
+    } else {
+      tile_url += `/None`;
+    }
 
       return (
       <div>
@@ -366,29 +407,29 @@ class SimpleMap extends React.Component {
         <div style={title_styles}>
      <Menu size='huge' inverted>
 
-        <h1 style={{margin:0}}>Tileshader Explorer: {this.state.city_title}</h1>
+        <h1 style={{margin:0, marginLeft:6, marginTop:6}}>{this.state.dataset.text}</h1>
 
         <Menu.Menu position='right' >
-          <Dropdown item placeholder='Column' value={this.state.field} search selection options={this.toOptions(this.state.dataset.fields)} onChange={this.onChangeField} />
           <Dropdown item placeholder='Dataset'
                     value={this.state.dataset.value} search selection options={this.toOptions(this.state.datasets)} onChange={this.onChangeDatasetChange} />
+          <Dropdown item placeholder='Column' value={this.state.field} search selection options={this.toOptions(this.state.dataset.fields)} onChange={this.onChangeField} />
           <Dropdown item placeholder='Aggregate How?' value={this.state.agg} search selection options={this.state.aggs} onChange={this.onChangeAgg} />
           <Dropdown item placeholder='Color Map' value={this.state.color} search selection options={this.state.colors} onChange={this.onChangeColors} />
           <Dropdown item placeholder='Shade How?' search selection  value={this.state.how} options={this.state.hows} onChange={this.onChangeHow} />
+          <Dropdown item placeholder='Additional Transforms' multiple selection  values={this.state.active_transforms} options={this.state.transforms} onChange={this.onChangeAdditionalTransforms} />
+
         </Menu.Menu>
       </Menu>
         </div>
 
           <img style={logo_styles} id="logo" src="https://secureservercdn.net/198.71.233.197/hb9.c63.myftpupload.com/wp-content/uploads/2020/01/cropped-makepath_Logo-2.png" />
           <img style={logo_styles2} id="logo" src="https://secureservercdn.net/198.71.233.197/hb9.c63.myftpupload.com/wp-content/uploads/2020/01/cropped-makepath_Logo-2.png" />
+        <Slider className="dynspreadSlider" discrete color="red" style={dynspreadSliderStyle}settings={this.state.sliderSettings} />
         </div>
 
       )
     }
-
-
   }
-
 
 
 ReactDOM.render(<SimpleMap />, document.getElementById('app'));
